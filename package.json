@@ -1,0 +1,16 @@
+﻿{
+  "name": "helix-whatsapp-bot",
+  "version": "3.0.0",
+  "description": "Helix BioFast Labs Standalone WhatsApp Bot — no n8n, no credit card",
+  "main": "helix-bot.js",
+  "scripts": {
+    "start": "node helix-bot.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.0",
+    "@hapi/boom": "^10.0.1",
+    "qrcode": "^1.5.3",
+    "express": "^4.18.2",
+    "pino": "^8.17.0"
+  }
+}
