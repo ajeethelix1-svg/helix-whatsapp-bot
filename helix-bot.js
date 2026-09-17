@@ -1,6 +1,6 @@
 // ============================================================
 // HELIX BIOFAST LABS — Complete Interactive Flowchart Bot
-// File: helix-bot.js
+// File: helix-bot.js (Robust Google Drive PDF Fix)
 // Hosted on Render.com — 100% Free, 24/7, Unlimited
 // ============================================================
 
@@ -27,10 +27,6 @@ function getSession(chatId) {
     userSessions[chatId] = { state: 'IDLE', failedAttempts: 0, data: {} };
   }
   return userSessions[chatId];
-}
-
-function resetSession(chatId) {
-  userSessions[chatId] = { state: 'IDLE', failedAttempts: 0, data: {} };
 }
 
 // ============================================================
@@ -153,24 +149,20 @@ const MESSAGES = {
 function detectDirectIntent(text) {
   const msg = text.toLowerCase().trim();
 
-  // Menu Numbers
   if (msg === '1' || msg === 'courses' || msg === 'training') return 'trainingMenu';
-  if (msg === '2' || msg === 'brochure' || msg === 'pdf') return 'brochure';
+  if (msg === '2' || msg === 'brochure' || msg === 'pdf' || msg === 'prospectus') return 'brochure';
   if (msg === '3' || msg === 'project' || msg === 'projects' || msg === 'dissertation') return 'projects';
   if (msg === '4' || msg === 'phd' || msg === 'ph.d' || msg === 'doctorate') return 'phd';
   if (msg === '5' || msg === 'forensic' || msg === 'forensics' || msg === 'dna test') return 'forensic';
   if (msg === '6' || msg === 'human' || msg === 'talk' || msg === 'contact' || msg === 'call' || msg === 'team') return 'human';
 
-  // Sub-menu Options
   if (msg === 'a' || msg.includes('short term') || msg.includes('7 day') || msg.includes('7 days')) return 'shortTerm';
   if (msg === 'b' || msg.includes('advance') || msg.includes('15 day') || msg.includes('15 days')) return 'advanceTraining';
   if (msg === 'c' || msg.includes('industrial') || msg.includes('30 day') || msg.includes('30 days')) return 'industrialTraining';
   if (msg === 'd' || msg.includes('job oriented') || msg.includes('career')) return 'jobOriented';
 
-  // Greetings
   if (msg.includes('hi') || msg.includes('hello') || msg.includes('hey') || msg.includes('start') || msg.includes('menu')) return 'mainMenu';
 
-  // Direct Keyword Smart Matching (Skips menu!)
   if (msg.includes('microbiology') || msg.includes('molecular') || msg.includes('biotech') || msg.includes('immunology') || msg.includes('cancer') || msg.includes('cell culture')) {
     if (msg.includes('15') || msg.includes('advance')) return 'advanceTraining';
     if (msg.includes('30') || msg.includes('industrial')) return 'industrialTraining';
@@ -181,24 +173,52 @@ function detectDirectIntent(text) {
   return null;
 }
 
-// Download PDF helper
+// Smart Robust Google Drive PDF Downloader
 function downloadFile(url) {
-  return new Promise((res, rej) => {
-    const p = url.startsWith('https') ? https : http;
-    p.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, (resp) => {
-      if ([301, 302, 303].includes(resp.statusCode)) {
-        downloadFile(resp.headers.location).then(res).catch(rej);
-        return;
+  return new Promise((resolve, reject) => {
+    const fetchUrl = (currentUrl, redirectCount = 0) => {
+      if (redirectCount > 6) return reject(new Error('Too many redirects'));
+
+      let targetUrl = currentUrl;
+      // Extract File ID if standard Google Drive view link
+      if (targetUrl.includes('drive.google.com/file/d/')) {
+        const match = targetUrl.match(/\/file\/d\/([^\/]+)/);
+        if (match && match[1]) {
+          targetUrl = `https://drive.usercontent.google.com/download?id=${match[1]}&export=download&confirm=t`;
+        }
+      } else if (targetUrl.includes('drive.google.com') && !targetUrl.includes('confirm=t')) {
+        targetUrl += (targetUrl.includes('?') ? '&' : '?') + 'confirm=t';
       }
-      const chunks = [];
-      resp.on('data', d => chunks.push(d));
-      resp.on('end', () => res(Buffer.concat(chunks)));
-      resp.on('error', rej);
-    }).on('error', rej);
+
+      const proto = targetUrl.startsWith('https') ? https : http;
+      proto.get(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' } }, (resp) => {
+        if ([301, 302, 303, 307, 308].includes(resp.statusCode)) {
+          const redirectUrl = resp.headers.location;
+          return fetchUrl(redirectUrl, redirectCount + 1);
+        }
+        const chunks = [];
+        resp.on('data', d => chunks.push(d));
+        resp.on('end', () => {
+          const buffer = Buffer.concat(chunks);
+          // Check if Google Drive returned a confirmation HTML page
+          const textContent = buffer.toString('utf8');
+          if (textContent.includes('uc-download-link') || textContent.includes('confirm=')) {
+            const match = textContent.match(/href="(\/uc\?export=download[^"]+)"/) || textContent.match(/href="(https:\/\/[^"]+confirm=[^"]+)"/);
+            if (match && match[1]) {
+              const fullUrl = match[1].startsWith('http') ? match[1].replace(/&amp;/g, '&') : 'https://drive.google.com' + match[1].replace(/&amp;/g, '&');
+              return fetchUrl(fullUrl, redirectCount + 1);
+            }
+          }
+          resolve(buffer);
+        });
+        resp.on('error', reject);
+      }).on('error', reject);
+    };
+    fetchUrl(url);
   });
 }
 
-// Notify staff of new lead/handover
+// Notify staff of new lead
 async function notifyStaff(sock, name, chatId, text, title = 'STUDENT LEAD') {
   if (!CONFIG.ADMIN_PHONE || CONFIG.ADMIN_PHONE.includes('XXXXXXXXXX')) return;
   try {
@@ -222,9 +242,6 @@ async function notifyStaff(sock, name, chatId, text, title = 'STUDENT LEAD') {
 async function processMessage(sock, chatId, name, text) {
   const session = getSession(chatId);
   const msg = text.trim();
-  const lower = msg.toLowerCase();
-
-  // Check if student directly typed an intent (overrides current flow)
   const directIntent = detectDirectIntent(text);
 
   if (directIntent && session.state === 'IDLE') {
@@ -232,7 +249,6 @@ async function processMessage(sock, chatId, name, text) {
     return handleDirectIntent(sock, chatId, name, text, directIntent, session);
   }
 
-  // Handle Multi-step Interactive Flows
   switch (session.state) {
 
     case 'WAITING_JOB_QUALIFICATION':
@@ -291,11 +307,9 @@ async function processMessage(sock, chatId, name, text) {
         return handleDirectIntent(sock, chatId, name, text, directIntent, session);
       }
 
-      // Handle Unknown / Failed Attempts with Universal Fallback
       session.failedAttempts += 1;
 
       if (session.failedAttempts >= 2) {
-        // Automatic handover to human after 2 failed attempts
         session.failedAttempts = 0;
         session.state = 'IDLE';
         await sock.sendMessage(chatId, {
@@ -348,7 +362,7 @@ async function handleDirectIntent(sock, chatId, name, text, directIntent, sessio
       await sock.sendMessage(chatId, { text: MESSAGES.humanPrompt });
       break;
     case 'brochure':
-      await sock.sendMessage(chatId, { text: '📄 *Helix BioFast Labs — Complete Brochure*\n\nPlease wait, sending PDF file...' });
+      await sock.sendMessage(chatId, { text: '📄 *Helix BioFast Labs — Complete Brochure*\n\nPlease wait, downloading and sending PDF file...' });
       if (CONFIG.BROCHURE_URL) {
         try {
           const buf = await downloadFile(CONFIG.BROCHURE_URL);
@@ -358,7 +372,9 @@ async function handleDirectIntent(sock, chatId, name, text, directIntent, sessio
             mimetype: 'application/pdf',
             caption: 'Helix BioFast Labs — Official Brochure\n\nWould you like more information?\nType 1 for Main Menu | Type 6 to Talk to Our Team.'
           });
+          console.log('✅ PDF Brochure sent successfully');
         } catch (err) {
+          console.error('PDF download error:', err.message);
           await sock.sendMessage(chatId, { text: '📄 For full brochure, please contact us:\n📞 8383897225\n📧 biofastlabs@gmail.com' });
         }
       } else {
@@ -448,5 +464,5 @@ app.get('/qr', (req, res) => {
 app.get('/health', (req, res) => res.json({ connected, time: new Date().toISOString() }));
 app.listen(CONFIG.PORT, '0.0.0.0', () => console.log('🌐 Express listening on port ' + CONFIG.PORT));
 
-console.log('\n🚀 Starting Helix BioFast Labs Complete Flowchart Bot...\n');
+console.log('\n🚀 Starting Helix BioFast Labs Bot with PDF Fix...\n');
 startBot();
